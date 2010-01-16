@@ -1,0 +1,11 @@
+#!/bin/bash
+FLEXPATH="`dirname $0`/../../src/flex_sdk_3.4"
+FLIXELPATH="`dirname $0`/../../src/flixel"
+OUTPATH="../../Sites"
+OUTNAME="Game.swf"
+
+MXML="./fcshd mxmlc"
+OPTS="-compiler.strict -compiler.debug -output $OUTPATH/$OUTNAME"
+
+cp index.html $OUTPATH &
+$MXML $OPTS -- Game.as 

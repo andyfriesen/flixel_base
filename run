@@ -1,0 +1,3 @@
+#!/bin/bash
+#open -a Safari http://localhost/~andy/index.html
+open http://localhost/~andy/index.html

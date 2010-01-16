@@ -1,0 +1,7 @@
+#!/bin/bash
+
+find -X -L . -name '*.as' -or -name '*.mxml' | xargs etags --lang=none \
+    --regex='/[(private|public|static|final)[ \t]+]* class[ \t]+\([A-Za-z0-9_]+\)/\1/' \
+    --regex='/[(private|public|static)[ \t]+]* var[ \t]+\([A-Za-z0-9_]+\)/\1/' \
+    --regex='/[(private|public|static|override|final)[ \t]+]* function[ \t]+(get|set)[ \t]+\([A-Za-z0-9_]+\)[ \t]*(/\1/' \
+    --regex='/[(private|public|static|override|final)[ \t]+]* function[ \t]+\([A-Za-z0-9_]+\)[ \t]*(/\1/'

@@ -1,0 +1,179 @@
+#!/usr/bin/python
+
+import os
+import subprocess
+import sys
+import fcntl
+import time
+import re
+
+PIPE_IN = 'fcsh.in'
+PIPE_OUT = 'fcsh.out'
+FCSH = 'fcsh'
+
+def log(s):
+    pass
+
+def enableLogging():
+    global log
+    def log(s):
+        print 'LOG', s
+
+def chomp(s):
+    if s.endswith('\n'):
+        return s[:-1]
+    else:
+        return s
+
+def exists(path):
+    try:
+        os.stat(path)
+    except OSError:
+        return False
+    else:
+        return True
+
+def makeNonBlocking(f):
+    fd = f.fileno()
+    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+def readToPrompt(f):
+    '''We need some way to know when fcsh has finished doing whatever it is we asked,
+    so that clients know when to stop listening to the service.
+
+    We do this by reading until we get the fcsh prompt.
+    '''
+    curLine = ''
+    while True:
+        try:
+            c = f.read(1)
+        except IOError, e:
+            if e.errno != 35:
+                raise
+            continue
+        else:
+            if c == '':
+                break
+            elif c == '\n':
+                yield curLine
+                curLine = ''
+            else:
+                curLine += c
+
+                if curLine == '(fcsh) ':
+                    break
+
+def client(argv):
+    pin = os.open(PIPE_IN, os.O_WRONLY)
+    pout = os.open(PIPE_OUT, os.O_RDONLY)
+
+    pipeIn = os.fdopen(pin, 'w')
+    pipeOut = os.fdopen(pout, 'r')
+
+    cmd = ' '.join(argv[1:])
+    pipeIn.write(cmd + '\n')
+    pipeIn.flush()
+
+    curLine = ''
+    for line in readToPrompt(pipeOut):
+        print line
+
+aliases = {}
+
+def processLine(command, line):
+    global aliases
+
+    match = re.search('Assigned ([0-9]+) as the compile target id', line)
+    if match:
+        aliases[command] = 'compile %s' % match.groups()[0]
+
+def server():
+    pipeIn = pipeOut = None
+    os.mkfifo(PIPE_IN, 0600)
+    os.mkfifo(PIPE_OUT, 0600)
+
+    try:
+        sp = subprocess.Popen(FCSH,
+                              shell=True,
+                              stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT)
+
+        curLine = ''
+
+        pin = os.open(PIPE_IN, os.O_RDONLY)
+        pout = os.open(PIPE_OUT, os.O_WRONLY)
+
+        pipeIn = os.fdopen(pin, 'r')
+        pipeOut = os.fdopen(pout, 'w')
+
+        makeNonBlocking(sp.stdout)
+
+        # Gobble up the initial prompt
+        list(readToPrompt(sp.stdout))
+
+        while sp.poll() is None:
+            try:
+                line = pipeIn.readline()
+            except IOError:
+                pass
+            else:
+                if line == '':
+                    # HACK: Need to trick Python into making our next readline block, rather
+                    # than returning EOF (the empty string) all the time.
+
+                    pipeIn.close()
+                    pin = os.open(PIPE_IN, os.O_RDONLY)
+                    pipeIn = os.fdopen(pin, 'r')
+                    continue
+
+                command = chomp(line)
+                try:
+                    command = aliases[command]
+                    pipeOut.write('NOTE: substituting %r\n' % command)
+                except KeyError:
+                    pass
+                log('')
+                log('pipeIn  -> %s' % chomp(command))
+
+                sp.stdin.write(command + '\n')
+                sp.stdin.flush()
+
+            for line in readToPrompt(sp.stdout):
+                processLine(command, line)
+                log('pipeOut -> %s' % line)
+                pipeOut.write(line + '\n')
+                pipeOut.flush()
+
+            pipeOut.write('\n(fcsh) ')
+            pipeOut.flush()
+    except KeyboardInterrupt:
+        print 'Got KeyboardInterrupt'
+    finally:
+        if pipeIn:
+            pipeIn.close()
+        if pipeOut:
+            pipeOut.close()
+        os.unlink(PIPE_IN)
+        os.unlink(PIPE_OUT)
+
+def startServer():
+    print 'Starting server...'
+    pid = os.fork()
+    if pid:
+        # Wait a moment for the server to start.
+        time.sleep(2)
+    else:
+        server()
+        sys.exit(0)
+
+if sys.argv[1] == '--run-server':
+    enableLogging()
+    server()
+    sys.exit(0)
+
+if not exists(PIPE_IN):
+    startServer()
+
+client(sys.argv)
